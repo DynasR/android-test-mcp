@@ -115,8 +115,8 @@ def test_policy_refuses_a_malformed_allowlist_at_start():
 async def test_the_tool_list_is_fixed(make_server):
     async with Client(make_server()) as client:
         names = sorted(tool.name for tool in (await client.list_tools()).tools)
-    assert names == ["install_apk", "launch_app", "list_devices", "run_flutter_test",
-                     "screenshot", "tap", "ui_elements"]
+    assert names == ["install_apk", "launch_app", "list_devices", "restart_app", "run_flutter_test",
+                     "screenshot", "set_airplane_mode", "tap", "type_text", "ui_elements"]
 
 
 async def test_install_of_a_package_off_the_list_is_refused(make_server, world, tmp_path):

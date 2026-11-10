@@ -43,5 +43,12 @@ hors liste ont été refusés ; un APK arm64 seul a été refusé au lancement, 
 le serveur dit désormais pourquoi (plantage, ABI absente). Pas encore essayés
 en réel : `run_flutter_test` et un téléphone physique.
 
-**Les limites.** Ni saisie de texte, ni défilement, ni touche retour pour
-l'instant.
+**Depuis :** `type_text` (ASCII limité à un jeu de caractères sûr, car `adb
+shell` fait relire le texte par le shell de l'appareil), `set_airplane_mode`
+(vérifié par le réglage de l'appareil) et `restart_app` (arrêt forcé puis
+même chemin que le lancement), essayés en réel le soir même sur l'émulateur :
+saisie vérifiée dans un champ Flutter (y compris en 3 morceaux), `;` et `é`
+refusés avant toute frappe, mode avion basculé et confirmé, deux applis
+relancées.
+
+**Les limites.** Ni défilement, ni touche retour pour l'instant.

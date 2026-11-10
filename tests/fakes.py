@@ -194,6 +194,17 @@ class FakeDevice:
     installs_package: str | None = DEMO
     screencap: bytes = field(default_factory=tiny_png)
     taps: list = field(default_factory=list)
+    # `input text`: every raw argument received, and the text it typed
+    text_arguments: list = field(default_factory=list)
+    typed: str = ""
+    # the focused field shows what was typed (False: a password field)
+    echo_typing: bool = True
+    # airplane mode, and whether the setting follows the command
+    airplane: bool = False
+    airplane_follows: bool = True
+    connectivity: str | None = None  # None: derived from airplane
+    force_stops: list = field(default_factory=list)
+    survives_force_stop: bool = False
 
 
 class FakeWorld:
@@ -278,6 +289,11 @@ class FakeWorld:
                     device.ui_file = hierarchy()
                 else:
                     device.ui_file = device.screens[device.current]
+                    if device.typed and device.echo_typing:
+                        field_node = node(text=device.typed, bounds="[48,300][1032,420]", clickable=True,
+                                          cls="android.widget.EditText")
+                        device.ui_file = device.ui_file.replace("</node></hierarchy>",
+                                                                field_node + "</node></hierarchy>")
                 return ok(f"UI hierchary dumped to: {path}\n")
             case ["exec-out", "cat", path] if path == UI_DUMP_PATH:
                 if device.ui_file is None:
@@ -294,6 +310,27 @@ class FakeWorld:
                 return ok("")
             case ["exec-out", "screencap", "-p"]:
                 return RunResult(0, device.screencap, b"")
+            case ["shell", "input", "text", argument]:
+                device.text_arguments.append(argument)
+                device.typed += argument.replace("%s", " ")
+                return ok("")
+            case ["shell", "cmd", "connectivity", "airplane-mode", ("enable" | "disable") as state]:
+                if device.airplane_follows:
+                    device.airplane = state == "enable"
+                return ok("")
+            case ["shell", "settings", "get", "global", "airplane_mode_on"]:
+                return ok("1\n" if device.airplane else "0\n")
+            case ["shell", "dumpsys", "connectivity"]:
+                if device.connectivity is not None:
+                    return ok(device.connectivity)
+                active = "none" if device.airplane else "100"
+                return ok(f"NetworkProviders for:\n  Active default network: {active}\n\nCurrent network preferences:\n")
+            case ["shell", "am", "force-stop", package]:
+                device.force_stops.append(package)
+                if not device.survives_force_stop:
+                    device.running.discard(package)
+                    device.focus = ("com.android.launcher3", "com.android.launcher3")
+                return ok("")
         raise AssertionError(f"unexpected adb command {args}")
 
     def _flutter(self, argv, timeout, cwd) -> RunResult:

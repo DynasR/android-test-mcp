@@ -9,7 +9,7 @@ from android_test_mcp.server import Timing
 
 # No waiting in tests: polls are immediate, timeouts tiny.
 FAST = Timing(adb_timeout_s=5, install_timeout_s=5, launch_timeout_s=0.2, poll_interval_s=0.01,
-              tap_settle_s=0, tap_change_timeout_s=0, dump_attempts=3)
+              tap_settle_s=0, tap_change_timeout_s=0, dump_attempts=3, airplane_timeout_s=0.2)
 
 PHYSICAL = "R58M41ABCDE"
 

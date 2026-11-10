@@ -10,7 +10,8 @@ accident.
 Lock 2, fixed verbs with validated arguments. There is no shell tool. Every
 argument that ends up on an adb or flutter command line is checked here first:
 serial and package by pattern, packages against an allowlist, paths resolved
-and confined to the projects named at server start.
+and confined to the projects named at server start, typed text restricted to
+characters the device shell cannot misread.
 
 These functions decide from their arguments alone: they never call adb.
 """
@@ -24,6 +25,13 @@ SERIAL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}")
 EMULATOR_SERIAL = re.compile(r"emulator-\d{4,5}")
 PACKAGE = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+")
 MAX_TEST_TIMEOUT_S = 3600
+
+# Typed text travels through `adb shell input text`, and `adb shell` joins its
+# arguments into ONE command line that the device's own shell parses: an argv
+# list on this side does not protect it. Only characters with no meaning to a
+# shell are allowed. `%` is out too: `input text` reads `%s` as a space.
+TEXT_CHARACTERS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,-_@:/+=")
+MAX_TEXT = 200
 
 
 @dataclass(frozen=True)
@@ -108,6 +116,23 @@ def check_apk_path(apk_path: str) -> Path:
     if not path.is_file():
         raise Refused(f"No APK file at {apk_path!r}.")
     return path
+
+
+def check_text(text: str) -> str:
+    if not isinstance(text, str) or not text:
+        raise Refused("Nothing to type: text is empty.")
+    if len(text) > MAX_TEXT:
+        raise Refused(f"Text is {len(text)} characters long; at most {MAX_TEXT} can be typed in one call.")
+    for character in text:
+        if character in TEXT_CHARACTERS:
+            continue
+        if ord(character) > 127:
+            raise Refused(f"{character!r} cannot be typed: `adb shell input text` types ASCII only. "
+                          "Nothing was typed.")
+        raise Refused(f"{character!r} is not allowed in typed text: adb passes the text through the "
+                      "device shell, where it could start another command. Allowed: ASCII letters, "
+                      "digits, space and . , - _ @ : / + =. Nothing was typed.")
+    return text
 
 
 def check_timeout(timeout_s: float) -> float:

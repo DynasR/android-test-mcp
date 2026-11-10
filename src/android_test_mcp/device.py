@@ -20,6 +20,8 @@ _FOCUS = re.compile(r"mCurrentFocus=Window\{\S+ \S+ ([^/\s}]+)/")
 _FOCUSED_APP = re.compile(r"mFocusedApp=\S*\{\S+ \S+ ([^/\s}]+)/")
 _VERSION_NAME = re.compile(r"versionName=(\S+)")
 _VERSION_CODE = re.compile(r"versionCode=(\d+)")
+_ACTIVE_NETWORK = re.compile(r"Active default network: (\w+)")
+TEXT_CHUNK = 16
 
 
 @dataclass(frozen=True)
@@ -97,6 +99,9 @@ class Adb:
         window, app = _FOCUS.search(dump), _FOCUSED_APP.search(dump)
         return (window.group(1) if window else None), (app.group(1) if app else None)
 
+    def force_stop(self, serial: str, package: str) -> None:
+        self._shell(serial, "am", "force-stop", package)
+
     def is_running(self, serial: str, package: str) -> bool:
         return self._shell(serial, "pidof", package).strip().split(" ")[0].isdigit()
 
@@ -120,6 +125,33 @@ class Adb:
 
     def tap(self, serial: str, x: int, y: int) -> None:
         self._shell(serial, "input", "tap", str(x), str(y))
+
+    def type_text(self, serial: str, text: str) -> int:
+        """Type `text` (already checked by policy.check_text) into the focused
+        field, in chunks: some IMEs truncate a long `input text` string. The
+        text is cut first and the spaces encoded after, so a space at a chunk
+        boundary never splits into '%' and 's'. Returns the number of chunks."""
+        chunks = [text[start:start + TEXT_CHUNK] for start in range(0, len(text), TEXT_CHUNK)]
+        for chunk in chunks:
+            self._shell(serial, "input", "text", chunk.replace(" ", "%s"))
+        return len(chunks)
+
+    # --- connectivity
+
+    def set_airplane_mode(self, serial: str, enabled: bool) -> None:
+        self._shell(serial, "cmd", "connectivity", "airplane-mode", "enable" if enabled else "disable")
+
+    def airplane_mode(self, serial: str) -> bool | None:
+        value = self._shell(serial, "settings", "get", "global", "airplane_mode_on").strip()
+        return {"1": True, "0": False}.get(value)
+
+    def network_seen(self, serial: str) -> bool | None:
+        """Whether a default network is active, from `dumpsys connectivity`;
+        None when the dump does not say."""
+        active = _ACTIVE_NETWORK.search(self._shell(serial, "dumpsys", "connectivity"))
+        if not active:
+            return None
+        return active.group(1) != "none"
 
     def screencap(self, serial: str) -> bytes:
         # exec-out, not shell: shell may rewrite line endings and corrupt the PNG.

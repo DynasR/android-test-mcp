@@ -1,8 +1,9 @@
 # android-test-mcp
 
 An [MCP](https://modelcontextprotocol.io) server that lets an AI agent drive
-Android emulators to test an app: install it, launch it, look at the screen,
-tap by label, run Flutter integration tests. Safely.
+Android emulators to test an app: install it, launch or restart it, look at
+the screen, tap by label, type text, switch airplane mode, run Flutter
+integration tests. Safely.
 
 Four independent locks, each tested on its own, each proven by breaking it
 on purpose.
@@ -32,9 +33,17 @@ them checks what really happened on the device.
 | Lock | Enforced by | Stops |
 |---|---|---|
 | **1. Emulators only** | Every call that touches a device: the serial must have the emulator form (`emulator-5554`) **and** the device must report itself as an emulator (`ro.kernel.qemu` / `ro.boot.qemu`). A physical device is allowed only when a human names it at start with `--allow-device SERIAL`. | Acting on a real phone by accident. A device reached through a forwarded port, or one whose serial merely looks right. |
-| **2. Fixed verbs, validated arguments** | Seven tools, no shell tool, no uninstall, no `pm clear`. Commands are argv lists, never shell strings. Serials and package names are validated by pattern; packages must be in `--allow-package`; projects in `--allow-project`; a test path is resolved and must stay inside its project; an APK's own manifest must declare the package it is installed as. | Command injection, path traversal (`../`), installing an app nobody allowed under an allowed name. |
+| **2. Fixed verbs, validated arguments** | Ten tools, no shell tool, no uninstall, no `pm clear`. Commands are argv lists, never shell strings. Serials and package names are validated by pattern; packages must be in `--allow-package` (install, launch, restart); projects in `--allow-project`; a test path is resolved and must stay inside its project; an APK's own manifest must declare the package it is installed as. Typed text is limited to ASCII letters, digits, space and `. , - _ @ : / + =`, 200 characters at most (see below). | Command injection, on this machine or on the device; path traversal (`../`); installing an app nobody allowed under an allowed name. |
 | **3. One heavy job at a time** | Installing and running Flutter tests take an exclusive operating-system file lock. A second heavy call, from this session or another one, is refused at once with who holds the lock and since when. The lock is shared by every instance on the machine by default (`--lock-dir`). | Two test suites building and running in parallel, which is enough to bring a development machine down. |
 | **4. Loud taps** | The agent never sends coordinates: it names a label, looked up in the view hierarchy. No match is an error. **Several matches is an error listing the candidates**, nothing is tapped. After the tap, the hierarchy is read again and the answer says whether the screen changed. | Taps in empty space reported as success; `"Back"` landing on `"Backups"`; a tap swallowed by the soft keyboard going unnoticed. |
+
+**Why typed text has its own character set.** An argv list protects the
+command line on this machine, not on the device: `adb shell` joins its
+arguments into one command line that the device's own shell parses. Text
+containing `;`, `&`, `|`, `$( )` or a quote would run as a second command
+there. So only characters with no meaning to a shell are accepted, and the
+refusal names the first bad one. `%` is out as well (`input text` reads `%s`
+as a space), and non-ASCII is refused because `input text` cannot type it.
 
 Each lock is tested **alone**, as if the others were broken: the device lock
 holds for a well-formed request on a valid label; the argument lock refuses
@@ -64,6 +73,11 @@ on emulators. Each one cost hours before it was understood:
   error gives the root cause of that app's latest crash, never another app's.
 - **A failed hierarchy dump must not be answered by the previous one.** The
   dump file is deleted before each dump.
+- **`input text` truncates long strings on some keyboards.** Text is typed
+  in chunks of 16 characters; it is cut first and its spaces encoded after,
+  so a space at a chunk boundary never splits into `%` and `s`.
+- **An airplane-mode command is not proof.** The server waits until the
+  device's own setting (`airplane_mode_on`) says so, or fails.
 
 ## Tools
 
@@ -72,9 +86,12 @@ on emulators. Each one cost hours before it was understood:
 | `list_devices` | Attached devices: serial, state, model, screen size, emulator or not, and whether the policy allows it, with the reason. |
 | `install_apk(serial, apk_path, package)` | Checks the APK declares `package`, installs it (`install -r`, data kept), then verifies with `pm path` and reads `versionName` / `versionCode`. |
 | `launch_app(serial, package)` | Refuses if the app is not installed, launches it, waits until it holds the focus. If it never does and its process is dead, reports the root cause of its latest crash (capped at 300 characters). |
+| `restart_app(serial, package)` | Force-stops an allowed app (unsaved state is lost), checks its process is gone, then follows exactly the `launch_app` path: focus verified, crash diagnosed. |
 | `screenshot(serial)` | Returns the PNG to the agent, with its size and sha256. The file is saved under the evidence directory, named by time and serial. |
 | `ui_elements(serial)` | Labelled elements (label, bounds, clickable), the number of clickable elements without a label, and whether the keyboard is up. |
 | `tap(serial, label, match="exact"\|"contains")` | Taps the centre of the one matching element. Returns `tapped`, `at`, `clickable`, `screen_changed`, `keyboard_shown` and a `note`. `screen_changed` is `null` when the tap was sent but the screen could not be read afterwards (an app switch): the agent must look before going on. |
+| `type_text(serial, text, into=None, match="exact"\|"contains")` | Optionally taps the one field labelled `into` first (same matching and errors as `tap`: nothing is typed on error), then types the text in chunks. Returns `chunks`, `into`, `verified` (the text now shows in a node where it did not before; `false` is not an error, a password field hides it), `keyboard_shown` and a `note`. |
+| `set_airplane_mode(serial, enabled)` | Switches airplane mode with `cmd connectivity airplane-mode`, waits until `airplane_mode_on` matches (error otherwise), and returns `airplane_mode`, `changed`, and `network_seen` (from `dumpsys connectivity`, `null` when it does not say). |
 | `run_flutter_test(serial, project_dir, test_path, timeout_s=900)` | Runs `flutter test <test_path> -d <serial> --reporter json` in the project, and returns passed / failed / skipped counts, failure names and messages, and the path of the full log kept as evidence. Exit code and event stream must agree for `success` to be true. |
 
 The server instructions tell the agent that **every text read from the device
@@ -192,13 +209,32 @@ opened another app was answered with an error, because the screen could not
 be read during the switch, although the tap had been sent. A tap now reports
 `screen_changed: null` with a note in that case, never a false failure. The
 ambiguity lock also held twice, on a label that appeared both in a button and
-in a whole-screen container. Still missing, and done by hand that night:
-typing text, switching airplane mode, force-stopping an app.
+in a whole-screen container. Three things had to be done by hand that night:
+typing text, switching airplane mode, force-stopping an app. They are now the
+tools `type_text`, `set_airplane_mode` and `restart_app`, behind the same
+locks, and were run live the same night on the same emulator:
+
+- `set_airplane_mode` on, on again (`changed: false`), then off; the setting
+  matched each time. `network_seen` stayed `false` right after switching back
+  on: it is a snapshot, the network needs a moment.
+- `restart_app` on both apps: focused in 2.7 s and 5.6 s. On a package not
+  allowed: refused.
+- `type_text` into a Flutter search field: `"Magic -x"` (a chunk starting
+  with a dash) verified; then 33 characters in 3 chunks, spaces at chunk
+  boundaries included, verified. Refused before typing: `rm -rf /; reboot`
+  (the `;`) and `Répertoire` (the `é`).
+- Typed into a screen where no field had the focus, `type_text` answered
+  `verified: false` with its note, instead of claiming success.
 
 ## What it does not do (yet)
 
-- **No typing, swiping, scrolling or back key.** Tap and read only. Text
-  input is the next verb; it will go through the same validation.
+- **No swiping, scrolling or back key.** Tap, type and read only.
+- **Typed text is ASCII from a short list.** No accents, no emoji, no
+  `# ? ! & ; ' "`: a test that needs them has to enter them another way
+  (the app's own test code, or a fixture).
+- **`verified: false` after typing is not a failure.** Password fields hide
+  their value, and some fields only show it after the keyboard closes; the
+  agent is told to take a screenshot.
 - **The emulator check is an accident guard, not a security boundary.** A
   rooted physical device can fake the emulator property; it would still need
   the emulator serial form. The goal is to never touch a real phone by

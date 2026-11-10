@@ -187,7 +187,7 @@ async def test_end_to_end_over_stdio(project, tmp_path):
         tools = (await client.list_tools()).tools
         # Refused by lock 2 before adb is ever called: no device needed.
         refused = await client.call_tool("tap", {"serial": "emulator-5554;reboot", "label": "OK"})
-    assert len(tools) == 7
+    assert len(tools) == 10
     assert refused.is_error
     assert "not a valid device serial" in text(refused)
 
