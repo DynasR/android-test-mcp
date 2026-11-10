@@ -90,7 +90,8 @@ class TapResult(TypedDict):
     tapped: str
     at: list[int]
     clickable: bool
-    screen_changed: bool
+    # None: the tap was sent, but the screen could not be read afterwards
+    screen_changed: bool | None
     keyboard_shown: bool
     note: str
 
@@ -150,14 +151,23 @@ def build_server(policy: Policy, evidence_dir: Path, runner: Runner = subprocess
         raise DeviceError(f"The view hierarchy of {serial} could not be read ({problem}). "
                           "An animation may be running; take a screenshot, then retry.")
 
-    def screen_changed_since(serial: str, signature: str) -> bool:
+    def screen_changed_since(serial: str, signature: str) -> bool | None:
+        """True or False once the screen could be read after the tap; None when
+        it never could (a tap that switches apps can leave uiautomator unable to
+        read the transition: seen live on 2026-11-10). The tap itself is done:
+        an unreadable screen afterwards must not be reported as a failed tap."""
         time.sleep(timing.tap_settle_s)
         deadline = time.monotonic() + timing.tap_change_timeout_s
+        read_once = False
         while True:
-            if read_screen(serial).signature != signature:
-                return True
+            try:
+                if read_screen(serial).signature != signature:
+                    return True
+                read_once = True
+            except DeviceError:
+                pass
             if time.monotonic() >= deadline:
-                return False
+                return False if read_once else None
             time.sleep(timing.poll_interval_s)
 
     # --- tools
@@ -269,7 +279,8 @@ def build_server(policy: Policy, evidence_dir: Path, runner: Runner = subprocess
     def tap(serial: str, label: str, match: Literal["exact", "contains"] = "exact") -> TapResult:
         """Tap the ONE element whose label (content-desc, text or hint) matches.
         No match, or several, is an error and nothing is tapped. The answer says
-        whether the screen changed after the tap."""
+        whether the screen changed after the tap: null when the tap was sent but
+        the screen could not be read afterwards (look before going on)."""
         with _as_tool_error():
             require_device(serial)
             before = read_screen(serial)
@@ -280,7 +291,11 @@ def build_server(policy: Policy, evidence_dir: Path, runner: Runner = subprocess
             changed = screen_changed_since(serial, before.signature)
             keyboard_after = adb.keyboard_shown(serial)
             note = ""
-            if not changed:
+            if changed is None:
+                note = ("The tap was sent, but the screen could not be read afterwards (an app "
+                        "switch or an animation): whether it changed is unknown. Call ui_elements "
+                        "or take a screenshot before the next step.")
+            elif not changed:
                 note = "The screen did not change after the tap."
                 if keyboard_before:
                     note += " The soft keyboard was up and may have swallowed it: close it, then retry."

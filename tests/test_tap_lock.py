@@ -175,6 +175,31 @@ async def test_a_hierarchy_that_never_comes_is_an_error(make_server, world):
     assert world.devices["emulator-5554"].taps == []
 
 
+async def test_a_screen_unreadable_after_the_tap_is_not_reported_as_a_failed_tap(make_server, world):
+    """Seen live on 2026-11-10: tapping a file in the Files app opened another
+    app; uiautomator could not read the screen during the switch, and the tool
+    answered with an error although the tap had been sent. The tap happened:
+    say so, and say that whether the screen changed is unknown."""
+    device = world.devices["emulator-5554"]
+    device.failing_dumps_after_tap = 99
+    result = await call(make_server(), "tap", {**TAP, "label": "Settings", "match": "contains"})
+    assert not result.is_error, text(result)
+    answer = result.structured_content
+    assert answer["tapped"] == "Settings\nTab 2 of 3"
+    assert answer["screen_changed"] is None
+    assert "could not be read" in answer["note"] and "ui_elements" in answer["note"]
+    assert device.taps == [(540, 2316)]
+
+
+async def test_a_screen_unreadable_for_a_moment_after_the_tap_still_reports_the_change(make_server, world):
+    device = world.devices["emulator-5554"]
+    device.failing_dumps_after_tap = 2
+    result = await call(make_server(), "tap", {**TAP, "label": "Settings", "match": "contains"})
+    assert not result.is_error, text(result)
+    assert result.structured_content["screen_changed"] is True
+    assert result.structured_content["note"] == ""
+
+
 async def test_a_stale_dump_is_never_read_as_the_current_screen(make_server, world):
     """If a dump fails, the file of the previous dump must not answer for it."""
     server = make_server()

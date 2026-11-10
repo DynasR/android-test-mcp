@@ -181,6 +181,9 @@ class FakeDevice:
     failing_dumps: int = 0
     # dumps that see only the root node: Flutter has not published its semantics yet
     pending_semantics: int = 0
+    # dumps that fail right AFTER a tap: the tap switched apps and uiautomator
+    # cannot read the screen during the transition (seen live on 2026-11-10)
+    failing_dumps_after_tap: int = 0
     # focus after launch: (focused window package, focused app package); None = the launched app
     focus_after_launch: tuple | None = None
     focus: tuple = ("com.android.launcher3", "com.android.launcher3")
@@ -284,6 +287,7 @@ class FakeWorld:
                 return ok(f"  mInputShown={'true' if device.keyboard else 'false'}\n")
             case ["shell", "input", "tap", x, y]:
                 device.taps.append((int(x), int(y)))
+                device.failing_dumps += device.failing_dumps_after_tap
                 for (screen, (x1, y1, x2, y2)), target in device.links.items():
                     if screen == device.current and x1 <= int(x) < x2 and y1 <= int(y) < y2:
                         device.current = target

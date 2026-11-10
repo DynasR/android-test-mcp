@@ -74,7 +74,7 @@ on emulators. Each one cost hours before it was understood:
 | `launch_app(serial, package)` | Refuses if the app is not installed, launches it, waits until it holds the focus. If it never does and its process is dead, reports the root cause of its latest crash (capped at 300 characters). |
 | `screenshot(serial)` | Returns the PNG to the agent, with its size and sha256. The file is saved under the evidence directory, named by time and serial. |
 | `ui_elements(serial)` | Labelled elements (label, bounds, clickable), the number of clickable elements without a label, and whether the keyboard is up. |
-| `tap(serial, label, match="exact"\|"contains")` | Taps the centre of the one matching element. Returns `tapped`, `at`, `clickable`, `screen_changed`, `keyboard_shown` and a `note`. |
+| `tap(serial, label, match="exact"\|"contains")` | Taps the centre of the one matching element. Returns `tapped`, `at`, `clickable`, `screen_changed`, `keyboard_shown` and a `note`. `screen_changed` is `null` when the tap was sent but the screen could not be read afterwards (an app switch): the agent must look before going on. |
 | `run_flutter_test(serial, project_dir, test_path, timeout_s=900)` | Runs `flutter test <test_path> -d <serial> --reporter json` in the project, and returns passed / failed / skipped counts, failure names and messages, and the path of the full log kept as evidence. Exit code and event stream must agree for `success` to be true. |
 
 The server instructions tell the agent that **every text read from the device
@@ -184,6 +184,16 @@ app (shown here as `com.example.app`):
   and gives the hint.
 - **Not exercised live.** `run_flutter_test` (the app had no
   `integration_test/` folder), and physical devices.
+
+A second live session the same night, on another tablet emulator in airplane
+mode, drove two Flutter apps through a file exchange (Files app, file picker,
+Android share sheet). It found a defect in the server itself: a tap that
+opened another app was answered with an error, because the screen could not
+be read during the switch, although the tap had been sent. A tap now reports
+`screen_changed: null` with a note in that case, never a false failure. The
+ambiguity lock also held twice, on a label that appeared both in a button and
+in a whole-screen container. Still missing, and done by hand that night:
+typing text, switching airplane mode, force-stopping an app.
 
 ## What it does not do (yet)
 
